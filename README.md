@@ -2,6 +2,7 @@
 
 iperf 3.22 as a PS5 homebrew ELF. A desktop iperf3 3.x client measures the path to a console that is running this server.
 
+[![Build](https://github.com/nefarius/ps5-iperf3/actions/workflows/ci.yml/badge.svg)](https://github.com/nefarius/ps5-iperf3/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/nefarius/ps5-iperf3)](LICENSE)
 [![Discord](https://img.shields.io/discord/346756263763378176.svg)](https://discord.nefarius.at/)
 
@@ -97,6 +98,10 @@ make check
 | `patches/` | Applied to the copy under `build/iperf/` |
 | `docker/Dockerfile` | Toolchain image |
 | `docs/compatibility.md` | Options that compile and options that stay disabled |
+
+## Continuous integration
+
+Pushes to `master` and pull requests run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on `ubuntu-latest`. The job runs `make build`, which builds the toolchain image and the ELF inside it, then checks that `build/iperf3.elf` is an ELF64 x86-64 PIE. It does not deploy to a console.
 
 ## Support policy
 
