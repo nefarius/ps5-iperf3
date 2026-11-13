@@ -1,0 +1,77 @@
+--- a/net.c	2026-09-29 20:47:02.000000000 +0200
++++ b/net.c	2026-11-13 22:51:29.393310862 +0100
+@@ -37,6 +37,8 @@
+ #include <netdb.h>
+ #include <string.h>
+ #include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/filio.h>
+ #include <limits.h>
+ #if defined(HAVE_UDP_SEGMENT) || defined(HAVE_UDP_GRO)
+ #include <linux/udp.h>
+@@ -92,13 +94,11 @@
+ {
+ 	struct pollfd pfd;
+ 	socklen_t optlen;
+-	int flags, optval;
++	int optval;
+ 	int ret;
+ 
+-	flags = 0;
+ 	if (timeout != -1) {
+-		flags = fcntl(s, F_GETFL, 0);
+-		if (fcntl(s, F_SETFL, flags | O_NONBLOCK) == -1)
++		if (setnonblocking(s, 1) == -1)
+ 			return -1;
+ 	}
+ 
+@@ -119,7 +119,7 @@
+ 			ret = -1;
+ 	}
+ 
+-	if (timeout != -1 && fcntl(s, F_SETFL, flags) == -1)
++	if (timeout != -1 && setnonblocking(s, 0) == -1)
+ 		ret = -1;
+ 
+ 	return (ret);
+@@ -838,22 +838,27 @@
+ setnonblocking(int fd, int nonblocking)
+ {
+     int flags, newflags;
++    int on = nonblocking ? 1 : 0;
+ 
+     flags = fcntl(fd, F_GETFL, 0);
+-    if (flags < 0) {
+-        perror("fcntl(F_GETFL)");
+-        return -1;
++    if (flags >= 0) {
++	if (nonblocking)
++	    newflags = flags | (int) O_NONBLOCK;
++	else
++	    newflags = flags & ~((int) O_NONBLOCK);
++	if (newflags == flags || fcntl(fd, F_SETFL, newflags) == 0)
++	    return 0;
+     }
+-    if (nonblocking)
+-	newflags = flags | (int) O_NONBLOCK;
+-    else
+-	newflags = flags & ~((int) O_NONBLOCK);
+-    if (newflags != flags)
+-	if (fcntl(fd, F_SETFL, newflags) < 0) {
+-	    perror("fcntl(F_SETFL)");
+-	    return -1;
+-	}
+-    return 0;
++
++    /*
++     * Prosper0GDK socket descriptors can reject F_SETFL. FIONBIO is the
++     * FreeBSD socket control used by the console for nonblocking I/O.
++     */
++    if (ioctl(fd, FIONBIO, &on) == 0)
++	return 0;
++
++    perror("setnonblocking");
++    return -1;
+ }
+ 
+ /****************************************************************************/
