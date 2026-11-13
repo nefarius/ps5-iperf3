@@ -1,0 +1,137 @@
+--- a/main.c	2026-09-29 20:47:02.000000000 +0200
++++ b/main.c	2026-11-13 23:05:00.531895459 +0100
+@@ -33,6 +33,7 @@
+ #include <errno.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <poll.h>
+ #include <stdint.h>
+ #include <sys/socket.h>
+ #include <sys/types.h>
+@@ -51,6 +52,117 @@
+ static int run(struct iperf_test *test);
+ 
+ 
++/*
++ * elfldr consumes a raw ELF and leaves the following bytes on the loader
++ * socket, which becomes stdin. The deploy tool writes one argument line
++ * there because that socket is the only path back out of a restricted VLAN.
++ */
++static char *
++next_loader_token(char **cursorp)
++{
++    char *cursor = *cursorp;
++    char *out;
++    size_t cap = 64;
++    size_t len = 0;
++    char quote = 0;
++
++    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')
++        cursor++;
++    if (*cursor == '\0') {
++        *cursorp = cursor;
++        return NULL;
++    }
++
++    out = malloc(cap);
++    if (!out)
++        return NULL;
++    while (*cursor != '\0') {
++        char ch = *cursor;
++
++        if (quote) {
++            if (ch == quote) {
++                quote = 0;
++                cursor++;
++                continue;
++            }
++            if (ch == '\\' && cursor[1] != '\0') {
++                cursor++;
++                ch = *cursor;
++            }
++        } else if (ch == '"' || ch == '\'') {
++            quote = ch;
++            cursor++;
++            continue;
++        } else if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
++            break;
++        } else if (ch == '\\' && cursor[1] != '\0') {
++            cursor++;
++            ch = *cursor;
++        }
++        if (len + 2 > cap) {
++            char *grown;
++            cap *= 2;
++            grown = realloc(out, cap);
++            if (!grown) {
++                free(out);
++                return NULL;
++            }
++            out = grown;
++        }
++        out[len++] = ch;
++        cursor++;
++    }
++    out[len] = '\0';
++    *cursorp = cursor;
++    return out;
++}
++
++static void
++append_loader_args(int *argc, char ***argv)
++{
++    struct pollfd pfd;
++    char buf[4096];
++    char *cursor;
++    char *tokens[128];
++    char **merged;
++    int count = 0;
++    int i;
++    ssize_t n;
++
++    pfd.fd = STDIN_FILENO;
++    pfd.events = POLLIN;
++    if (poll(&pfd, 1, 300) <= 0 || (pfd.revents & POLLIN) == 0)
++        return;
++
++    n = read(STDIN_FILENO, buf, sizeof(buf) - 1);
++    if (n <= 0)
++        return;
++    buf[n] = '\0';
++    cursor = buf;
++    while (count < 128) {
++        char *token = next_loader_token(&cursor);
++        if (!token)
++            break;
++        tokens[count++] = token;
++    }
++    if (count == 0)
++        return;
++
++    merged = malloc((size_t)(*argc + count + 1) * sizeof(*merged));
++    if (!merged)
++        return;
++    merged[0] = (*argv)[0];
++    for (i = 0; i < count; i++)
++        merged[i + 1] = tokens[i];
++    for (i = 1; i < *argc; i++)
++        merged[count + i] = (*argv)[i];
++    merged[*argc + count] = NULL;
++    *argv = merged;
++    *argc += count;
++}
++
++
++
+ /**************************************************************************/
+ int
+ main(int argc, char **argv)
+@@ -114,6 +226,8 @@
+         iperf_errexit(NULL, "create new test error - %s", iperf_strerror(i_errno));
+     iperf_defaults(test);	/* sets defaults */
+ 
++    append_loader_args(&argc, &argv);
++
+     if (iperf_parse_arguments(test, argc, argv) < 0) {
+         iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
+         fprintf(stderr, "\n");

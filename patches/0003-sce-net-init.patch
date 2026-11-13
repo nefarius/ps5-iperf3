@@ -1,0 +1,30 @@
+--- a/main.c	2026-11-13 23:05:31.021862632 +0100
++++ b/main.c	2026-11-13 23:06:57.724773355 +0100
+@@ -38,6 +38,9 @@
+ #include <sys/socket.h>
+ #include <sys/types.h>
+ #include <netinet/in.h>
++
++int sceNetInit(void);
++int sceNetPoolCreate(const char *name, int size, int flags);
+ #include <arpa/inet.h>
+ #include <netdb.h>
+ 
+@@ -168,6 +171,17 @@
+ main(int argc, char **argv)
+ {
+     struct iperf_test *test;
++    int net_pool;
++
++    if (sceNetInit() != 0) {
++        perror("sceNetInit");
++        return 1;
++    }
++    net_pool = sceNetPoolCreate("iperf3", 1024 * 1024, 0);
++    if (net_pool < 0) {
++        fprintf(stderr, "sceNetPoolCreate failed: %d\n", net_pool);
++        return 1;
++    }
+ 
+     /*
+      * Atomics check. We prefer to have atomic types (which is

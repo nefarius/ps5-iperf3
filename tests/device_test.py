@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise the PS5 ELF against the host iperf 3.22 build."""
+"""Exercise the PS5 ELF against a desktop iperf3.
+
+The console accepts connections from the dev network and does not dial back
+out, so every transfer is started by the desktop client.
+"""
 
 import os
 import socket
@@ -14,15 +18,6 @@ HOST_IPERF = ROOT / "build" / "host-src" / "src" / "iperf3"
 RUN = ROOT / "tools" / "ps5_run.py"
 
 
-def local_ip_toward(host):
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        probe.connect((host, 9))
-        return probe.getsockname()[0]
-    finally:
-        probe.close()
-
-
 def run_ps5(args, timeout):
     command = [sys.executable, str(RUN), "--elf", str(ELF), "--timeout", str(timeout), "--"]
     command.extend(args)
@@ -33,9 +28,9 @@ def run_ps5(args, timeout):
     return output
 
 
-def start_host(args):
+def start_host(binary, args):
     return subprocess.Popen(
-        [str(HOST_IPERF), *args],
+        [binary, *args],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,
@@ -73,22 +68,17 @@ def main():
     ps5 = os.environ.get("PS5_HOST")
     if not ps5:
         raise SystemExit("PS5_HOST is required")
-    if not ELF.is_file() or not HOST_IPERF.is_file():
-        raise SystemExit("run make check before device tests")
+    if not ELF.is_file():
+        raise SystemExit("run make build before device tests")
+    if not HOST_IPERF.is_file():
+        host_iperf = os.environ.get("IPERF3", "iperf3")
+    else:
+        host_iperf = str(HOST_IPERF)
 
-    host_ip = os.environ.get("DEPLOY_HTTP_HOST") or local_ip_toward(ps5)
     port = 5201
 
     usage = run_ps5([], 15)
     expect(usage, ["Usage", "iperf3"], "usage")
-
-    server = start_host(["-s", "-1", "-p", str(port), "-J"])
-    try:
-        wait_for_port("127.0.0.1", port, 5)
-        client = run_ps5(["-c", host_ip, "-p", str(port), "-t", "1", "-J", "-i", "1"], 25)
-    finally:
-        host_out = finish(server)
-    expect(client + host_out, ["bits_per_second", "sum_sent"], "tcp client")
 
     def ps5_server(extra_client):
         proc = subprocess.Popen(
@@ -99,9 +89,10 @@ def main():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
+        client_out = ""
         try:
             wait_for_port(ps5, port, 20)
-            client = start_host(["-c", ps5, "-p", str(port), "-t", "1", "-J", "-i", "1", *extra_client])
+            client = start_host(host_iperf, ["-c", ps5, "-p", str(port), "-t", "1", "-J", "-i", "1", *extra_client])
             client_out = finish(client)
         finally:
             server_out = finish(proc)

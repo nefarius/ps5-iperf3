@@ -1,0 +1,101 @@
+--- a/iperf_api.c	2026-09-29 20:47:02.000000000 +0200
++++ b/iperf_api.c	2026-11-13 23:08:05.669707138 +0100
+@@ -4940,7 +4940,7 @@
+     struct iperf_interval_results *irp, *nirp;
+ 
+     /* XXX: need to free interval list too! */
+-    munmap(sp->buffer, sp->test->settings->blksize);
++    free(sp->buffer);
+     if (sp->buffer_fd >= 0) {
+         close(sp->buffer_fd);
+         sp->buffer_fd = -1;
+@@ -4965,28 +4965,6 @@
+     int ret = 0;
+     int size;
+ 
+-    char template[1024];
+-    if (test->tmp_template) {
+-        snprintf(template, sizeof(template) / sizeof(char), "%s", test->tmp_template);
+-    } else {
+-        //find the system temporary dir *unix, windows, cygwin support
+-        char* tempdir = getenv("TMPDIR");
+-        if (tempdir == 0){
+-            tempdir = getenv("TEMP");
+-        }
+-        if (tempdir == 0){
+-            tempdir = getenv("TMP");
+-        }
+-        if (tempdir == 0){
+-#if defined(__ANDROID__)
+-            tempdir = "/data/local/tmp";
+-#else
+-            tempdir = "/tmp";
+-#endif
+-        }
+-        snprintf(template, sizeof(template) / sizeof(char), "%s/iperf3.XXXXXX", tempdir);
+-    }
+-
+     sp = (struct iperf_stream *) malloc(sizeof(struct iperf_stream));
+     if (!sp) {
+         i_errno = IECREATESTREAM;
+@@ -5007,16 +4985,7 @@
+     memset(sp->result, 0, sizeof(struct iperf_stream_result));
+     TAILQ_INIT(&sp->result->interval_results);
+ 
+-    /* Create and randomize the buffer */
+-    sp->buffer_fd = mkstemp(template);
+-    if (sp->buffer_fd == -1) {
+-        i_errno = IECREATESTREAM;
+-        goto err_exit_free_result;
+-    }
+-    if (unlink(template) < 0) {
+-        i_errno = IECREATESTREAM;
+-        goto err_exit_close_buffer;
+-    }
++    /* Anonymous buffer: a payload has no temp file that mmap can use. */
+     size = test->settings->blksize;
+     if (test->protocol->id == Pudp && test->settings->gso && (size < test->settings->gso_bf_size))
+         size = test->settings->gso_bf_size;
+@@ -5024,14 +4993,11 @@
+         size = test->settings->gro_bf_size;
+     if (sp->test->debug)
+         printf("Buffer %d bytes\n", size);
+-    if (ftruncate(sp->buffer_fd, size) < 0) {
++    sp->buffer_fd = -1;
++    sp->buffer = (char *) malloc((size_t) size);
++    if (sp->buffer == NULL) {
+         i_errno = IECREATESTREAM;
+-        goto err_exit_close_buffer;
+-    }
+-    sp->buffer = (char *) mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_SHARED, sp->buffer_fd, 0);
+-    if (sp->buffer == MAP_FAILED) {
+-        i_errno = IECREATESTREAM;
+-        goto err_exit_close_buffer;
++        goto err_exit_free_result;
+     }
+     sp->pending_size = 0;
+ 
+@@ -5073,9 +5039,9 @@
+         close(sp->diskfile_fd);
+     }
+ err_exit_munmap_buffer:
+-    munmap(sp->buffer, sp->test->settings->blksize);
++    free(sp->buffer);
+-err_exit_close_buffer:
+-    close(sp->buffer_fd);
++    if (sp->buffer_fd >= 0)
++        close(sp->buffer_fd);
+ err_exit_free_result:
+     free(sp->result);
+ err_exit_free_sp:
+--- a/iperf_tcp.c	2026-09-29 20:47:02.000000000 +0200
++++ b/iperf_tcp.c	2026-11-13 23:08:05.669707138 +0100
+@@ -97,7 +97,7 @@
+     if (!sp->pending_size)
+ 	      sp->pending_size = sp->settings->blksize;
+ 
+-    if (sp->test->zerocopy)
++    if (sp->test->zerocopy && sp->buffer_fd >= 0)
+ 	      r = Nsendfile(sp->buffer_fd, sp->socket, sp->buffer, sp->pending_size);
+     else
+ 	      r = Nwrite(sp->socket, sp->buffer, sp->pending_size, Ptcp);

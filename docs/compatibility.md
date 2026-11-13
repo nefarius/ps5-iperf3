@@ -10,7 +10,9 @@ The ELF is built with PS5 Payload SDK 0.45 and identifies itself as iperf 3.22. 
 
 `make check` also runs a one-second TCP transfer between two host iperf 3.22 processes and checks that both JSON reports contain `bits_per_second`.
 
-`make device-check` loads the ELF through an elfldr on `PS5_HOST` port 9021. It covers a no-argument usage launch, PS5 client and server TCP tests, reverse mode, two parallel streams, and a 10 Mbit/s UDP test. JSON output is requested on those runs. Set `PS5_HOST` to the console address before running it.
+`make device-check` loads the ELF through an elfldr on `PS5_HOST` port 9021. Arguments travel on that same socket, after the ELF bytes. The desktop iperf3 connects to the console. A console client that dials the dev machine needs a firewall rule for that return path, so the device tests do not use that direction. The run covers a no-argument usage launch, a TCP test, reverse mode, two parallel streams, and a 10 Mbit/s UDP test. JSON output is requested on those runs.
+
+Before the first socket call, the payload runs `sceNetInit` and creates a 1 MiB SceNet pool. The default address family is IPv4. `-6` still selects IPv6.
 
 ## Compiled from the SDK surface
 
@@ -23,7 +25,7 @@ These options use interfaces that the SDK headers and libraries export. They are
 | `-Z` zero copy | Enabled through the FreeBSD `sendfile` path. |
 | `-D` daemon and `--pidfile` | `daemon()` is present. Detaching from the loader socket can end the captured session, so foreground `-s` is the deployment path. |
 | `--skip-rx-copy` | `MSG_TRUNC` exists. Its receive behavior is not treated as Linux-compatible. |
-| IPv6 | The socket API is compiled in. The device tests use IPv4. |
+| IPv6 | `-6` selects it. The default family is IPv4, which is what the device tests use. |
 
 ## Left disabled
 
@@ -32,3 +34,5 @@ OpenSSL authentication, SCTP, MPTCP, UDP GSO/GRO, packet pacing, and bind-to-dev
 ## Socket nonblocking
 
 `patches/0001-ps5-nonblocking-fallback.patch` keeps the normal `fcntl(O_NONBLOCK)` path and falls back to `ioctl(FIONBIO)` when a console socket rejects `F_SETFL`. That fallback is what timed connects use.
+
+The stream buffer is anonymous memory. The payload does not provide a temporary file that `mmap` can use, so `-Z` sends with a normal write.

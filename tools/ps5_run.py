@@ -1,43 +1,29 @@
 #!/usr/bin/env python3
-"""Load iperf3.elf on a PS5 ELF loader and relay its standard output."""
+"""Load iperf3.elf on a PS5 ELF loader and relay its standard output.
+
+The console only accepts inbound connections from the dev network. The ELF
+bytes and one argument line are written to the loader socket; elfldr leaves
+that line on stdin for the payload.
+"""
 
 import argparse
-import http.server
 import os
 import socket
 import sys
-import threading
 import time
-import urllib.parse
 from pathlib import Path
 
 
-def local_ip_toward(host):
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        probe.connect((host, 9))
-        return probe.getsockname()[0]
-    finally:
-        probe.close()
-
-
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        sys.stderr.write("http: " + (fmt % args) + "\n")
-
-
-def serve(directory):
-    handler = lambda *args, **kwargs: QuietHandler(*args, directory=directory, **kwargs)
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server
+def quote_arg(arg):
+    if arg and not any(ch in arg for ch in " \t\r\n\\\"'"):
+        return arg
+    escaped = arg.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def read_for(sock, seconds):
     sock.settimeout(0.5)
     deadline = time.time() + seconds
-    chunks = []
     while time.time() < deadline:
         try:
             data = sock.recv(65536)
@@ -45,10 +31,8 @@ def read_for(sock, seconds):
             continue
         if not data:
             break
-        chunks.append(data)
         sys.stdout.buffer.write(data)
         sys.stdout.buffer.flush()
-    return b"".join(chunks)
 
 
 def main():
@@ -56,8 +40,7 @@ def main():
     parser.add_argument("--elf", required=True)
     parser.add_argument("--host", default=os.environ.get("PS5_HOST"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PS5_PORT") or "9021"))
-    parser.add_argument("--timeout", type=float, default=25.0)
-    parser.add_argument("--http-host", default=os.environ.get("DEPLOY_HTTP_HOST"))
+    parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("iperf_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.iperf_args[:1] == ["--"]:
@@ -66,17 +49,12 @@ def main():
         parser.error("set PS5_HOST or pass --host")
 
     elf = Path(args.elf).resolve()
-    httpd = None
+    payload = elf.read_bytes()
     if args.iperf_args:
-        httpd = serve(str(elf.parent))
-        http_host = args.http_host or local_ip_toward(args.host)
-        http_port = httpd.server_address[1]
-        quoted = urllib.parse.quote(" ".join(args.iperf_args))
-        payload = f"http://{http_host}:{http_port}/{elf.name}?args={quoted}\n".encode()
-        sys.stderr.write(payload.decode())
+        payload += (" ".join(quote_arg(arg) for arg in args.iperf_args) + "\n").encode()
+        sys.stderr.write(f"deploy {elf.name} {' '.join(args.iperf_args)} -> {args.host}:{args.port}\n")
     else:
-        payload = elf.read_bytes()
-        sys.stderr.write(f"deploy raw {elf}\n")
+        sys.stderr.write(f"deploy {elf.name} -> {args.host}:{args.port}\n")
 
     sock = socket.create_connection((args.host, args.port), timeout=10)
     try:
@@ -84,8 +62,6 @@ def main():
         read_for(sock, args.timeout)
     finally:
         sock.close()
-        if httpd is not None:
-            httpd.shutdown()
     return 0
 
 
