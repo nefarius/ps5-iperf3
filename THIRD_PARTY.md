@@ -1,5 +1,7 @@
 # Third-party code
 
+Files original to this repository are under the MIT License in [LICENSE](LICENSE). The trees below keep their own licenses.
+
 ## iperf 3.22
 
 - Upstream: https://github.com/esnet/iperf
